@@ -1,7 +1,7 @@
 "use client"
 
 import { useState } from "react"
-import { DashboardLayout } from "@/components/dashboard-layout"
+import  DashboardLayout  from "@/components/dashboard-layout"
 import { Badge } from "@/components/ui/badge"
 import { Play } from "lucide-react"
 import Image from "next/image"

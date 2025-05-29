@@ -1,6 +1,6 @@
 "use client"
 
-import { useState } from "react"
+import { useState, useEffect } from "react"
 import { useRouter } from "next/navigation"
 import DashboardLayout from "@/components/dashboard-layout"
 import { Button } from "@/components/ui/button"
@@ -19,78 +19,108 @@ import {
 } from "lucide-react"
 import Image from "next/image"
 import { motion, AnimatePresence } from "framer-motion"
+import { useAuth, withAuth } from "@/hooks/use-auth"
+import { campaignApi, callApi, Campaign as APICampaign } from "@/lib/api"
+import { toast } from "sonner"
 
-interface Campaign {
-  id: number
-  name: string
-  createdBy: string
-  createdOn: string
-  agent: string
-  scheduled: string
-  status: "ACTIVE" | "PAUSED" | "COMPLETED"
+interface Campaign extends APICampaign {
   selected: boolean
   expanded: boolean
   toBeMade?: number
   completed?: number
+  callsCount?: number
+  createdOn: string
+  scheduled: string
 }
 
-export default function CampaignsPage() {
+interface CampaignStats {
+  total: number
+  completed: number
+  active: number
+  paused: number
+}
+
+function CampaignsPage() {
   const router = useRouter()
+  const { user } = useAuth()
   const [searchQuery, setSearchQuery] = useState("")
-  const [campaigns, setCampaigns] = useState<Campaign[]>([
-    {
-      id: 1,
-      name: "ODD Media",
-      createdBy: "Marketing Lead",
-      createdOn: "10/04/2025",
-      agent: "Riya-Wishfin v2 | Expert",
-      scheduled: "10/04/2025",
-      status: "ACTIVE",
-      selected: false,
-      expanded: true,
-      toBeMade: 238,
-      completed: 62,
-    },
-    {
-      id: 2,
-      name: "ODD Media",
-      createdBy: "Marketing Lead",
-      createdOn: "10/04/2025",
-      agent: "Riya-Wishfin v2 | Expert",
-      scheduled: "10/04/2025",
-      status: "PAUSED",
-      selected: true,
-      expanded: false,
-    },
-    {
-      id: 3,
-      name: "ODD Media",
-      createdBy: "Marketing Lead",
-      createdOn: "10/04/2025",
-      agent: "Riya-Wishfin v2 | Expert",
-      scheduled: "10/04/2025",
-      status: "ACTIVE",
-      selected: false,
-      expanded: false,
-    },
-    {
-      id: 4,
-      name: "ODD Media",
-      createdBy: "Marketing Lead",
-      createdOn: "10/04/2025",
-      agent: "Riya-Wishfin v2 | Expert",
-      scheduled: "10/04/2025",
-      status: "ACTIVE",
+  const [campaigns, setCampaigns] = useState<Campaign[]>([])
+  const [isLoading, setIsLoading] = useState(true)
+  const [stats, setStats] = useState<CampaignStats>({
+    total: 0,
+    completed: 0,
+    active: 0,
+    paused: 0
+  })
+
+  // Fetch campaigns from backend
+  useEffect(() => {
+    const fetchCampaigns = async () => {
+      if (!user) return
+
+      try {
+        setIsLoading(true)
+        console.log('Fetching campaigns from backend...')
+        
+        const campaignsData = await campaignApi.getAll()
+        console.log('Campaigns fetched successfully:', campaignsData)
+        
+        if (Array.isArray(campaignsData)) {
+          // Get call statistics for all campaigns in one batch to avoid repeated API calls
+          const campaignIds = campaignsData.map(c => c.id)
+          const callStats = await callApi.getBatchCampaignStats(campaignIds)
+          
+          // Transform backend data to match frontend interface
+          const transformedCampaigns: Campaign[] = campaignsData.map((campaign) => {
+            const stats = callStats[campaign.id] || { total: 0, completed: 0 }
+            
+            return {
+              ...campaign,
       selected: false,
       expanded: false,
-    },
-  ])
+              toBeMade: stats.total - stats.completed,
+              completed: stats.completed,
+              callsCount: stats.total,
+              // Set computed display fields
+              createdOn: campaign.createdAt,
+              scheduled: campaign.startDate || campaign.createdAt
+            }
+          })
+          
+          setCampaigns(transformedCampaigns)
+          
+          // Calculate stats
+          const newStats = {
+            total: transformedCampaigns.length,
+            completed: transformedCampaigns.filter(c => c.status === 'completed').length,
+            active: transformedCampaigns.filter(c => c.status === 'active').length,
+            paused: transformedCampaigns.filter(c => c.status === 'paused').length
+          }
+          setStats(newStats)
+          
+          toast.success(`Loaded ${transformedCampaigns.length} campaign(s)`)
+        } else {
+          console.log('No campaigns found or invalid response format')
+          setCampaigns([])
+          toast.info('No campaigns found')
+        }
+      } catch (error) {
+        console.error('Failed to fetch campaigns:', error)
+        toast.error(`Failed to load campaigns: ${error instanceof Error ? error.message : 'Unknown error'}`)
+        setCampaigns([])
+      } finally {
+        setIsLoading(false)
+      }
+    }
+
+    fetchCampaigns()
+  }, [user])
 
   const handleCreateCampaign = () => {
     router.push("/create-campaign")
   }
 
-  const handleCampaignClick = (campaignId: number) => {
+  const handleCampaignClick = (campaignId: string) => {
     setCampaigns(
       campaigns.map((campaign) =>
         campaign.id === campaignId ? { ...campaign, expanded: !campaign.expanded } : campaign,
@@ -98,14 +128,97 @@ export default function CampaignsPage() {
     )
   }
 
-  const handleCheckboxChange = (campaignId: number, checked: boolean) => {
+  const handleCheckboxChange = (campaignId: string, checked: boolean) => {
     setCampaigns(
       campaigns.map((campaign) => (campaign.id === campaignId ? { ...campaign, selected: checked } : campaign)),
     )
   }
 
-  const handleInfoClick = (campaignId: number) => {
+  const handleInfoClick = (campaignId: string) => {
     router.push(`/campaigns/${campaignId}/info`)
+  }
+
+  const handleRefresh = async () => {
+    if (!user) return
+    
+    try {
+      setIsLoading(true)
+      
+      // Clear caches to force fresh data
+      callApi.clearCache()
+      
+      const campaignsData = await campaignApi.getAll()
+      
+      if (Array.isArray(campaignsData)) {
+        // Get call statistics for all campaigns in one batch
+        const campaignIds = campaignsData.map(c => c.id)
+        const callStats = await callApi.getBatchCampaignStats(campaignIds)
+        
+        const transformedCampaigns: Campaign[] = campaignsData.map((campaign) => {
+          const stats = callStats[campaign.id] || { total: 0, completed: 0 }
+          
+          return {
+            ...campaign,
+            selected: false,
+            expanded: false,
+            toBeMade: stats.total - stats.completed,
+            completed: stats.completed,
+            callsCount: stats.total,
+            // Set computed display fields
+            createdOn: campaign.createdAt,
+            scheduled: campaign.startDate || campaign.createdAt
+          }
+        })
+        
+        setCampaigns(transformedCampaigns)
+        
+        const newStats = {
+          total: transformedCampaigns.length,
+          completed: transformedCampaigns.filter(c => c.status === 'completed').length,
+          active: transformedCampaigns.filter(c => c.status === 'active').length,
+          paused: transformedCampaigns.filter(c => c.status === 'paused').length
+        }
+        setStats(newStats)
+        
+        toast.success('Campaigns refreshed')
+      }
+    } catch (error) {
+      console.error('Failed to refresh campaigns:', error)
+      toast.error('Failed to refresh campaigns')
+    } finally {
+      setIsLoading(false)
+    }
+  }
+
+  // Filter campaigns based on search query
+  const filteredCampaigns = campaigns.filter(campaign =>
+    campaign.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
+    (campaign.agent?.name || '').toLowerCase().includes(searchQuery.toLowerCase())
+  )
+
+  const formatDate = (dateString: string) => {
+    try {
+      return new Date(dateString).toLocaleDateString('en-US', {
+        year: 'numeric',
+        month: '2-digit',
+        day: '2-digit'
+      })
+    } catch {
+      return dateString
+    }
+  }
+
+  const getStatusBadgeClass = (status: string) => {
+    switch (status?.toLowerCase()) {
+      case 'active':
+        return "bg-[#b5d333] text-black hover:bg-[#b5d333]"
+      case 'paused':
+        return "bg-red-100 text-red-800 hover:bg-red-100"
+      case 'completed':
+        return "bg-green-100 text-green-800 hover:bg-green-100"
+      default:
+        return "bg-gray-100 text-gray-800 hover:bg-gray-100"
+    }
   }
 
   const containerVariants = {
@@ -138,12 +251,16 @@ export default function CampaignsPage() {
           <div className="flex items-center space-x-3">
             <h1 className="text-2xl font-bold">All Campaigns</h1>
             <motion.div
-              animate={{ rotate: 360 }}
-              transition={{ duration: 2, repeat: Number.POSITIVE_INFINITY, ease: "linear" }}
+              animate={{ rotate: isLoading ? 360 : 0 }}
+              transition={{ duration: 2, repeat: isLoading ? Number.POSITIVE_INFINITY : 0, ease: "linear" }}
+              className="cursor-pointer"
+              onClick={handleRefresh}
             >
               <RefreshCw className="h-4 w-4 text-gray-500" />
             </motion.div>
-            <span className="text-sm text-gray-500">Last updated 5 mins ago</span>
+            <span className="text-sm text-gray-500">
+              {isLoading ? 'Loading...' : `Last updated ${new Date().toLocaleTimeString()}`}
+            </span>
           </div>
           <motion.div whileHover={{ scale: 1.05 }} whileTap={{ scale: 0.95 }}>
             <Button
@@ -160,10 +277,10 @@ export default function CampaignsPage() {
           {/* Stats Cards */}
           <div className="flex-1 grid grid-cols-4 gap-4">
             {[
-              { icon: MessageSquare, label: "Total", value: "67", color: "yellow" },
-              { icon: CheckCircle, label: "Completed", value: "28", color: "green" },
-              { icon: Activity, label: "Active", value: "30", color: "lime" },
-              { icon: Pause, label: "Paused", value: "2", color: "red" },
+              { icon: MessageSquare, label: "Total", value: stats.total.toString(), color: "yellow" },
+              { icon: CheckCircle, label: "Completed", value: stats.completed.toString(), color: "green" },
+              { icon: Activity, label: "Active", value: stats.active.toString(), color: "lime" },
+              { icon: Pause, label: "Paused", value: stats.paused.toString(), color: "red" },
             ].map((stat, index) => (
               <motion.div
                 key={stat.label}
@@ -206,7 +323,15 @@ export default function CampaignsPage() {
                   transition={{ delay: index * 0.1 + 0.5, type: "spring", stiffness: 200 }}
                   className="text-3xl font-bold"
                 >
-                  {stat.value}
+                  {isLoading ? (
+                    <motion.div
+                      animate={{ opacity: [0.5, 1, 0.5] }}
+                      transition={{ duration: 1.5, repeat: Number.POSITIVE_INFINITY }}
+                      className="h-8 w-8 bg-gray-200 rounded"
+                    />
+                  ) : (
+                    stat.value
+                  )}
                 </motion.div>
               </motion.div>
             ))}
@@ -274,8 +399,62 @@ export default function CampaignsPage() {
 
         {/* Campaigns List */}
         <motion.div variants={itemVariants} className="space-y-4">
+          {isLoading ? (
+            // Loading skeleton
+            <div className="space-y-4">
+              {[1, 2, 3].map((index) => (
+                <motion.div
+                  key={index}
+                  initial={{ opacity: 0 }}
+                  animate={{ opacity: 1 }}
+                  className="bg-white rounded-xl shadow-sm border border-gray-100 p-6"
+                >
+                  <div className="grid grid-cols-12 gap-4">
+                    <div className="col-span-1">
+                      <div className="h-4 w-4 bg-gray-200 rounded animate-pulse" />
+                    </div>
+                    <div className="col-span-4 space-y-2">
+                      <div className="h-6 bg-gray-200 rounded animate-pulse" />
+                      <div className="h-4 bg-gray-200 rounded animate-pulse w-3/4" />
+                    </div>
+                    <div className="col-span-3">
+                      <div className="h-10 bg-gray-200 rounded-full animate-pulse" />
+                    </div>
+                    <div className="col-span-2">
+                      <div className="h-4 bg-gray-200 rounded animate-pulse" />
+                    </div>
+                    <div className="col-span-1">
+                      <div className="h-6 w-16 bg-gray-200 rounded animate-pulse" />
+                    </div>
+                    <div className="col-span-1">
+                      <div className="h-8 w-8 bg-gray-200 rounded animate-pulse" />
+                    </div>
+                  </div>
+                </motion.div>
+              ))}
+            </div>
+          ) : filteredCampaigns.length === 0 ? (
+            // Empty state
+            <motion.div
+              initial={{ opacity: 0, y: 20 }}
+              animate={{ opacity: 1, y: 0 }}
+              className="text-center py-12"
+            >
+              <div className="text-gray-500 text-lg mb-4">
+                {searchQuery ? 'No campaigns found matching your search' : 'No campaigns created yet'}
+              </div>
+              {!searchQuery && (
+                <Button
+                  onClick={handleCreateCampaign}
+                  className="bg-black text-[#b5d333] hover:bg-gray-900"
+                >
+                  Create Your First Campaign
+                </Button>
+              )}
+            </motion.div>
+          ) : (
           <AnimatePresence>
-            {campaigns.map((campaign, index) => (
+              {filteredCampaigns.map((campaign, index) => (
               <motion.div
                 key={campaign.id}
                 layout
@@ -312,8 +491,12 @@ export default function CampaignsPage() {
                       transition={{ delay: index * 0.05 + 0.1 }}
                     >
                       <div className="font-semibold text-lg mb-1">{campaign.name}</div>
-                      <div className="text-sm text-gray-500">Created by: {campaign.createdBy}</div>
-                      <div className="text-sm text-gray-500">Created on: {campaign.createdOn}</div>
+                        <div className="text-sm text-gray-500">
+                          Created by: {campaign.createdBy?.firstName && campaign.createdBy?.lastName 
+                            ? `${campaign.createdBy.firstName} ${campaign.createdBy.lastName}` 
+                            : campaign.createdBy?.email || 'Unknown'}
+                        </div>
+                        <div className="text-sm text-gray-500">Created on: {formatDate(campaign.createdOn)}</div>
                     </motion.div>
                   </div>
                   <div className="col-span-3 flex items-center">
@@ -332,10 +515,10 @@ export default function CampaignsPage() {
                           className="rounded-full"
                         />
                       </motion.div>
-                      <span className="font-medium">{campaign.agent}</span>
+                        <span className="font-medium">{campaign.agent?.name}</span>
                     </motion.div>
                   </div>
-                  <div className="col-span-2 flex items-center text-gray-600">{campaign.scheduled}</div>
+                    <div className="col-span-2 flex items-center text-gray-600">{formatDate(campaign.scheduled)}</div>
                   <div className="col-span-1 flex items-center">
                     <motion.div
                       initial={{ opacity: 0, scale: 0.8 }}
@@ -344,13 +527,7 @@ export default function CampaignsPage() {
                       whileHover={{ scale: 1.05 }}
                     >
                       <Badge
-                        className={
-                          campaign.status === "ACTIVE"
-                            ? "bg-[#b5d333] text-black hover:bg-[#b5d333]"
-                            : campaign.status === "PAUSED"
-                              ? "bg-red-100 text-red-800 hover:bg-red-100"
-                              : "bg-green-100 text-green-800 hover:bg-green-100"
-                        }
+                          className={getStatusBadgeClass(campaign.status)}
                       >
                         {campaign.status}
                       </Badge>
@@ -424,8 +601,11 @@ export default function CampaignsPage() {
               </motion.div>
             ))}
           </AnimatePresence>
+          )}
         </motion.div>
       </motion.div>
     </DashboardLayout>
   )
 }
+
+export default withAuth(CampaignsPage)

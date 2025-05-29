@@ -12,7 +12,7 @@ import Image from "next/image"
 import { Checkbox } from "@/components/ui/checkbox"
 import { motion } from "framer-motion"
 import { useAuth, withAuth } from "@/hooks/use-auth"
-import { agentApi, campaignApi, contactListApi, contactApi, callApi, Agent } from "@/lib/api"
+import { agentApi, campaignApi, callApi, Agent } from "@/lib/api"
 import { toast } from "sonner"
 
 // Fallback agents in case API fails
@@ -88,6 +88,8 @@ function CreateCampaignPage() {
   const [selectedTime, setSelectedTime] = useState("")
   const [csvFile, setCsvFile] = useState<File | null>(null)
   const [concurrentCalls, setConcurrentCalls] = useState("1")
+  const [csvParsedContacts, setCsvParsedContacts] = useState<any[]>([])
+  const [csvParsingError, setCsvParsingError] = useState<string>("")
 
   // Fetch agents from backend
   useEffect(() => {
@@ -164,88 +166,69 @@ function CreateCampaignPage() {
     }
 
     // For step 2, require all fields
-    if (currentStep === 2 && (!selectedDate || !selectedTime || !csvFile)) {
-      toast.error("Please complete all required fields")
+    if (currentStep === 2 && (!selectedDate || !selectedTime || (!csvFile || csvParsedContacts.length === 0))) {
+      if (!selectedDate) {
+        toast.error("Please select a date")
+      } else if (!selectedTime) {
+        toast.error("Please select a time")
+      } else if (!csvFile) {
+        toast.error("Please upload a CSV file")
+      } else if (csvParsedContacts.length === 0) {
+        toast.error("Please upload a valid CSV file with contacts")
+      }
       return
     }
 
     setIsSaving(true)
 
     try {
-      // Step 1: Create a default contact list for this campaign
-      const contactListData = {
-        name: `${campaignName} - Contact List`,
-        description: `Contact list for campaign: ${campaignName}`,
-      }
-
-      const contactList = await contactListApi.create(contactListData)
-      console.log('Contact list created:', contactList)
-
-      // Step 2: Create the campaign with the contact list ID
+      // Create the campaign directly without requiring a contact list
       const campaignData = {
         name: campaignName,
         description: `Campaign created with ${csvFile ? 'CSV upload' : 'no contacts'}`,
         type: "outbound" as const,
         agentId: selectedAgent,
-        contactListId: contactList.id,
         startDate: selectedDate?.toISOString(),
-        endDate: undefined,
         dailyStartTime: selectedTime || undefined,
-        dailyEndTime: undefined,
         maxAttempts: 3,
         concurrentCalls: parseInt(concurrentCalls) || 1,
       }
 
       const campaign = await campaignApi.create(campaignData)
       console.log('Campaign created:', campaign)
+      console.log('Campaign ID:', campaign.id)
+      console.log('Campaign object keys:', Object.keys(campaign))
 
-      // Step 3: If we're on step 2 and have a CSV file, process it
-      if (currentStep === 2 && csvFile) {
+      // Step 3: If we're on step 2 and have a CSV file, create calls directly
+      if (currentStep === 2 && csvFile && csvParsedContacts.length > 0) {
         try {
-          // Parse CSV file
-          const contacts = await parseCSVFile(csvFile)
-          console.log('Parsed contacts:', contacts)
+          console.log('Creating calls with parsed contacts:', csvParsedContacts)
+          console.log('Using campaign ID:', campaign.id)
 
-          if (contacts.length === 0) {
-            toast.error("No valid contacts found in CSV file")
-            return
-          }
+          // Bulk create calls with contact data
+          const callResult = await callApi.bulkCreate({
+            campaignId: campaign.id,
+            agentId: selectedAgent,
+            contacts: csvParsedContacts,
+            scheduledAt: selectedDate,
+            type: 'outbound'
+          })
+          console.log('Calls created:', callResult)
 
-          // Bulk import contacts
-          const importResult = await contactApi.bulkImport(contactList.id, contacts)
-          console.log('Contacts imported:', importResult)
-
-          const successfulContacts = importResult.contacts || []
+          const successfulCalls = callResult.successfulCalls || 0
+          const skippedCalls = callResult.skippedCalls || 0
           
-          if (successfulContacts.length === 0) {
-            toast.error("No contacts were imported successfully")
+          if (successfulCalls === 0) {
+            toast.error("No calls were created successfully")
             return
           }
-
-          // Step 4: Create calls for each imported contact
-          const callPromises = successfulContacts.map((contact: any) => 
-            callApi.create({
-              campaignId: campaign.id,
-              agentId: selectedAgent,
-              contactId: contact.id,
-              type: 'outbound',
-              scheduledAt: selectedDate,
-              notes: `Campaign: ${campaignName}`,
-            })
-          )
-
-          const calls = await Promise.allSettled(callPromises)
-          const successfulCalls = calls.filter(result => result.status === 'fulfilled').length
-          const failedCalls = calls.filter(result => result.status === 'rejected').length
-
-          console.log(`Created ${successfulCalls} calls, ${failedCalls} failed`)
 
           toast.success(
-            `Campaign launched successfully! Created ${successfulContacts.length} contacts and ${successfulCalls} calls.`
+            `Campaign launched successfully! Created ${successfulCalls} calls${skippedCalls > 0 ? `, skipped ${skippedCalls}` : ''}.`
           )
         } catch (csvError) {
-          console.error('Error processing CSV:', csvError)
-          toast.error(`Failed to process CSV: ${csvError instanceof Error ? csvError.message : 'Unknown error'}`)
+          console.error('Error creating calls:', csvError)
+          toast.error(`Failed to create calls: ${csvError instanceof Error ? csvError.message : 'Unknown error'}`)
           return
         }
       } else {
@@ -275,10 +258,28 @@ function CreateCampaignPage() {
     setCurrentStep(1)
   }
 
+  const handleCsvFileChange = async (file: File | null) => {
+    setCsvFile(file)
+    setCsvParsedContacts([])
+    setCsvParsingError("")
+
+    if (file) {
+      try {
+        const contacts = await parseCSVFile(file)
+        setCsvParsedContacts(contacts)
+        toast.success(`Successfully parsed ${contacts.length} contacts from CSV`)
+      } catch (error) {
+        const errorMessage = error instanceof Error ? error.message : 'Failed to parse CSV'
+        setCsvParsingError(errorMessage)
+        toast.error(errorMessage)
+      }
+    }
+  }
+
   const handleDownloadTemplate = () => {
-    // Create a sample CSV content
+    // Create a sample CSV content with headers that match the backend schema
     const csvContent =
-      "Name,Phone,Email,Age\nJohn Doe,+1234567890,john@example.com,30\nJane Smith,+0987654321,jane@example.com,25"
+      "FirstName,LastName,Phone,Email,Age,Company,DoNotCall\nJohn,Doe,+1234567890,john@example.com,30,Tech Corp,false\nJane,Smith,+0987654321,jane@example.com,25,Business Inc,false\nBob,Johnson,+1122334455,bob@example.com,35,Sales Ltd,true"
 
     // Create and download the file
     const blob = new Blob([csvContent], { type: "text/csv" })
@@ -309,32 +310,54 @@ function CreateCampaignPage() {
           const contacts = []
 
           for (let i = 1; i < lines.length; i++) {
-            const values = lines[i].split(',').map(v => v.trim())
+            const values = lines[i].split(',').map(v => v.trim().replace(/"/g, ''))
             if (values.length !== headers.length) continue
 
             const contact: any = {}
             headers.forEach((header, index) => {
               const value = values[index]
-              if (header.includes('name')) {
+              if (!value) return
+
+              // Map common header variations to backend fields
+              if (header.includes('name') && !header.includes('first') && !header.includes('last')) {
+                // If it's just "name", split it into first and last
+                const nameParts = value.split(' ')
+                contact.firstName = nameParts[0]
+                if (nameParts.length > 1) {
+                  contact.lastName = nameParts.slice(1).join(' ')
+                }
+              } else if (header.includes('first') || header.includes('fname')) {
                 contact.firstName = value
-              } else if (header.includes('phone')) {
-                contact.phoneNumber = value
-              } else if (header.includes('email')) {
+              } else if (header.includes('last') || header.includes('lname')) {
+                contact.lastName = value
+              } else if (header.includes('phone') || header.includes('mobile') || header.includes('number')) {
+                // Clean and standardize phone number
+                contact.phoneNumber = value.replace(/[^\d\+\-\(\)\s]/g, '')
+              } else if (header.includes('email') || header.includes('mail')) {
                 contact.email = value
+              } else if (header.includes('do_not_call') || header.includes('donotcall') || header.includes('dnc')) {
+                contact.doNotCall = value.toLowerCase() === 'true' || value === '1'
               } else {
+                // Store other fields in customFields
                 if (!contact.customFields) contact.customFields = {}
                 contact.customFields[header] = value
               }
             })
 
-            if (contact.phoneNumber) {
+            // Only add contact if it has a phone number
+            if (contact.phoneNumber && contact.phoneNumber.trim()) {
               contacts.push(contact)
             }
           }
 
+          if (contacts.length === 0) {
+            reject(new Error('No valid contacts found. Please ensure your CSV has a phone number column.'))
+            return
+          }
+
           resolve(contacts)
         } catch (error) {
-          reject(error)
+          reject(new Error(`Failed to parse CSV file: ${error instanceof Error ? error.message : 'Unknown error'}`))
         }
       }
       reader.onerror = () => reject(new Error('Failed to read file'))
@@ -543,7 +566,29 @@ function CreateCampaignPage() {
                       Download Template
                     </Button>
                   </div>
-                  <CSVUploader onFileChange={setCsvFile} />
+                  <CSVUploader onFileChange={handleCsvFileChange} />
+                  
+                  {/* CSV Parsing Results */}
+                  {csvParsedContacts.length > 0 && (
+                    <div className="mt-3 p-3 bg-green-50 border border-green-200 rounded-md">
+                      <div className="flex items-center text-green-800">
+                        <CheckCircle className="h-4 w-4 mr-2" />
+                        <span className="text-sm font-medium">
+                          Successfully parsed {csvParsedContacts.length} contacts
+                        </span>
+                      </div>
+                      <div className="text-xs text-green-600 mt-1">
+                        Preview: {csvParsedContacts.slice(0, 3).map(c => c.firstName || c.phoneNumber).join(', ')}
+                        {csvParsedContacts.length > 3 && ` and ${csvParsedContacts.length - 3} more...`}
+                      </div>
+                    </div>
+                  )}
+                  
+                  {csvParsingError && (
+                    <div className="mt-3 p-3 bg-red-50 border border-red-200 rounded-md">
+                      <div className="text-red-800 text-sm">{csvParsingError}</div>
+                    </div>
+                  )}
                 </div>
 
                 {/* Concurrent Calls */}
@@ -583,7 +628,7 @@ function CreateCampaignPage() {
                   </Button>
                   <Button
                     onClick={handleRunCampaign}
-                    disabled={!selectedDate || !selectedTime || !csvFile || isSaving}
+                    disabled={!selectedDate || !selectedTime || !csvFile || csvParsedContacts.length === 0 || isSaving}
                     className="bg-black text-[#b5d333] hover:bg-gray-900 rounded-md h-12 px-6 w-full font-medium disabled:opacity-50 disabled:cursor-not-allowed"
                   >
                     RUN CAMPAIGN
