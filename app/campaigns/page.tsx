@@ -13,8 +13,6 @@ import {
   Pause,
   Search,
   RefreshCw,
-  MoreHorizontal,
-  ChevronDown,
 } from "lucide-react"
 import Image from "next/image"
 
@@ -26,9 +24,8 @@ interface Campaign {
   agent: string
   scheduled: string
   status: "ACTIVE" | "PAUSED" | "COMPLETED"
-  expanded: boolean
-  toBeMade?: number
-  completed?: number
+  toBeMade: number
+  completed: number
 }
 
 export default function CampaignsPage() {
@@ -43,7 +40,6 @@ export default function CampaignsPage() {
       agent: "Riya-Wishfin v2 | Expert",
       scheduled: "10/04/2025",
       status: "ACTIVE",
-      expanded: true,
       toBeMade: 238,
       completed: 62,
     },
@@ -55,7 +51,8 @@ export default function CampaignsPage() {
       agent: "Riya-Wishfin v2 | Expert",
       scheduled: "10/04/2025",
       status: "PAUSED",
-      expanded: false,
+      toBeMade: 150,
+      completed: 50,
     },
     {
       id: 3,
@@ -65,17 +62,8 @@ export default function CampaignsPage() {
       agent: "Riya-Wishfin v2 | Expert",
       scheduled: "10/04/2025",
       status: "ACTIVE",
-      expanded: false,
-    },
-    {
-      id: 4,
-      name: "ODD Media",
-      createdBy: "Marketing Lead",
-      createdOn: "10/04/2025",
-      agent: "Riya-Wishfin v2 | Expert",
-      scheduled: "10/04/2025",
-      status: "ACTIVE",
-      expanded: false,
+      toBeMade: 300,
+      completed: 0,
     },
   ])
 
@@ -84,15 +72,7 @@ export default function CampaignsPage() {
   }
 
   const handleCampaignClick = (campaignId: number) => {
-    setCampaigns(
-      campaigns.map((campaign) =>
-        campaign.id === campaignId ? { ...campaign, expanded: !campaign.expanded } : campaign,
-      ),
-    )
-  }
-
-  const handleInfoClick = (campaignId: number) => {
-    router.push(`/campaigns/${campaignId}/info`)
+    router.push(`/campaigns/${campaignId}`)
   }
 
   return (
@@ -101,11 +81,11 @@ export default function CampaignsPage() {
         {/* Header */}
         <div className="flex justify-between items-center">
           <div className="flex items-center space-x-3">
-            <h1 className="text-xl font-bold">All Campaigns</h1>
+            <h1 className="text-xl font-medium">All Campaigns</h1>
             <RefreshCw className="h-4 w-4 text-gray-500" />
             <span className="text-xs text-gray-500">Last updated 5 mins ago</span>
           </div>
-          <Button onClick={handleCreateCampaign} className="bg-black text-[#b5d333] hover:bg-gray-900 font-medium text-xs">
+          <Button onClick={handleCreateCampaign} className="bg-black text-[#b5d333] hover:bg-gray-900 font-normal text-xs">
             + CREATE CAMPAIGN
           </Button>
         </div>
@@ -119,7 +99,7 @@ export default function CampaignsPage() {
               { icon: CheckCircle, label: "Completed", value: "28", color: "green" },
               { icon: Activity, label: "Active", value: "30", color: "lime" },
               { icon: Pause, label: "Paused", value: "2", color: "red" },
-            ].map((stat, index) => (
+            ].map((stat) => (
               <div key={stat.label} className="bg-white rounded-xl p-6 shadow-sm hover:shadow-md">
                 <div className="flex items-center space-x-3 mb-3">
                   <div
@@ -147,7 +127,7 @@ export default function CampaignsPage() {
                   </div>
                   <span className="text-gray-600 font-medium text-xs">{stat.label}</span>
                 </div>
-                <div className="text-2xl font-bold">{stat.value}</div>
+                <div className="text-2xl font-medium">{stat.value}</div>
               </div>
             ))}
           </div>
@@ -166,9 +146,9 @@ export default function CampaignsPage() {
                 <div>
                   <div className="flex items-center space-x-2 mb-2">
                     <span className="text-xs">Agent</span>
-                    <Badge className="bg-[#b5d333] text-black text-xs font-medium">NEW</Badge>
+                    <Badge className="bg-[#b5d333] text-black text-xs font-normal">NEW</Badge>
                   </div>
-                  <h3 className="text-base font-bold">Riya-Wishfin v2 | Expert</h3>
+                  <h3 className="text-base font-medium">Riya-Wishfin v2 | Expert</h3>
                 </div>
               </div>
             </div>
@@ -187,36 +167,31 @@ export default function CampaignsPage() {
         </div>
 
         {/* Table Header */}
-        <div className="grid grid-cols-11 gap-4 px-6 py-3 text-xs font-medium text-gray-600">
+        <div className="grid grid-cols-12 gap-4 px-6 py-3 text-xs font-medium text-gray-600">
           <div className="col-span-4">Campaigns</div>
           <div className="col-span-3">Agent</div>
           <div className="col-span-2">Scheduled</div>
-          <div className="col-span-1 flex items-center">
-            Status
-            <ChevronDown className="ml-1 h-4 w-4" />
-          </div>
-          <div className="col-span-1">Actions</div>
+          <div className="col-span-2">Progress</div>
+          <div className="col-span-1">Status</div>
         </div>
 
         {/* Campaigns List */}
         <div className="space-y-4">
-          {campaigns.map((campaign, index) => (
+          {campaigns.map((campaign) => (
             <div
               key={campaign.id}
-              className="bg-white rounded-xl shadow-sm border border-gray-100 overflow-hidden hover:shadow-md"
+              onClick={() => handleCampaignClick(campaign.id)}
+              className="bg-white rounded-xl shadow-sm border border-gray-100 p-6 hover:shadow-md cursor-pointer transition-shadow"
             >
-              <div
-                className="grid grid-cols-11 gap-4 p-6 hover:bg-gray-50 cursor-pointer"
-                onClick={() => handleCampaignClick(campaign.id)}
-              >
+              <div className="grid grid-cols-12 gap-4 items-center">
                 <div className="col-span-4">
                   <div>
-                    <div className="font-semibold text-base mb-1">{campaign.name}</div>
+                    <div className="font-medium text-base mb-1">{campaign.name}</div>
                     <div className="text-xs text-gray-500">Created by: {campaign.createdBy}</div>
                     <div className="text-xs text-gray-500">Created on: {campaign.createdOn}</div>
                   </div>
                 </div>
-                <div className="col-span-3 flex items-center">
+                <div className="col-span-3">
                   <div className="flex items-center space-x-3">
                     <Image
                       src="/placeholder.svg?height=40&width=40"
@@ -228,8 +203,23 @@ export default function CampaignsPage() {
                     <span className="font-medium text-xs">{campaign.agent}</span>
                   </div>
                 </div>
-                <div className="col-span-2 flex items-center text-gray-600 text-xs">{campaign.scheduled}</div>
-                <div className="col-span-1 flex items-center">
+                <div className="col-span-2 text-gray-600 text-xs">
+                  {campaign.scheduled}
+                </div>
+                <div className="col-span-2">
+                  <div className="text-xs text-gray-500 mb-1">
+                    {campaign.completed} / {campaign.toBeMade + campaign.completed}
+                  </div>
+                  <div className="h-2 bg-gray-100 rounded-full overflow-hidden">
+                    <div
+                      className="h-full bg-[#b5d333]"
+                      style={{
+                        width: `${(campaign.completed / (campaign.toBeMade + campaign.completed)) * 100}%`
+                      }}
+                    />
+                  </div>
+                </div>
+                <div className="col-span-1">
                   <Badge
                     className={
                       campaign.status === "ACTIVE"
@@ -242,43 +232,7 @@ export default function CampaignsPage() {
                     {campaign.status}
                   </Badge>
                 </div>
-                <div className="col-span-1 flex items-center">
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    onClick={(e) => {
-                      e.stopPropagation()
-                      handleInfoClick(campaign.id)
-                    }}
-                    className="hover:bg-gray-200"
-                  >
-                    <MoreHorizontal className="h-4 w-4" />
-                  </Button>
-                </div>
               </div>
-
-              {/* Expanded Content */}
-              {campaign.expanded && (
-                <div className="overflow-hidden">
-                  <div className="px-6 pb-6 pt-2">
-                    <div className="grid grid-cols-11 gap-4">
-                      <div className="col-span-4">
-                        <div className="flex space-x-8">
-                          <div>
-                            <div className="text-xs text-gray-500">To Be Made</div>
-                            <div className="text-xl font-bold">{campaign.toBeMade}</div>
-                          </div>
-                          <div>
-                            <div className="text-xs text-gray-500">Completed</div>
-                            <div className="text-xl font-bold">{campaign.completed}</div>
-                          </div>
-                        </div>
-                      </div>
-                      <div className="col-span-7"></div>
-                    </div>
-                  </div>
-                </div>
-              )}
             </div>
           ))}
         </div>
